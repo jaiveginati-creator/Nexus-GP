@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Apex GP — Multiplayer Prototype (lobby + relay test)</title>
+<style>
+  body { font-family: monospace; background: #0c1016; color: #dfe4ea;
+         margin: 0; padding: 16px; }
+  h1 { font-size: 16px; letter-spacing: .1em; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+  input, button { font-family: monospace; font-size: 13px;
+                  padding: 6px 10px; }
+  input { background: #161c26; color: #fff; border: 1px solid #333; }
+  button { background: #e10600; color: #fff; border: 0; cursor: pointer; }
+  button.ghost { background: #2a3240; }
+  #code { font-size: 22px; letter-spacing: .3em; color: #7fd4c8; }
+  #lobby { border: 1px solid #333; padding: 8px; min-height: 60px;
+           max-width: 520px; }
+  #lobby .me { color: #f2d132; }
+  #log { border: 1px solid #333; padding: 8px; height: 120px;
+         overflow-y: scroll; max-width: 520px; font-size: 12px; }
+  canvas { border: 1px solid #333; background: #10141b;
+           margin-top: 8px; }
+  .hint { color: #8a93a3; font-size: 12px; max-width: 560px; }
+</style>
+</head>
+<body>
+<h1>APEX GP — NET PROTOTYPE ( milestone 1: lobby + test-pose relay )</h1>
+<p class="hint">Separate test page — the game in <b>index.html</b> is
+untouched. Drive your dot with WASD/arrows. Poses relay at 20 Hz;
+peers appear as dots. This proves rooms, codes, lobby sync and relay,
+not racing physics.</p>
+<div class="row">
+  <input id="srv" size="26" value="ws://localhost:8765">
+  <input id="name" size="14" maxlength="24" value="Driver1">
+  <button id="btnCreate">CREATE ROOM</button>
+  <input id="joinCode" size="8" maxlength="6" placeholder="CODE">
+  <button id="btnJoin">JOIN</button>
+  <button id="btnLeave" class="ghost">LEAVE</button>
+</div>
+<div class="row"><div>ROOM CODE: <span id="code">—</span></div></div>
+<div class="row"><div id="lobby">not connected</div></div>
+<canvas id="map" width="520" height="320"></canvas>
+<div class="row"><div id="log"></div></div>
+
+<script src="./multiplayer.js"></script>
+<script>
+(function () {
+    "use strict";
+    const $ = (id) => document.getElementById(id);
+    const logEl = $("log");
+    function log(m) {
+        const d = document.createElement("div");
+        d.textContent = new Date().toLocaleTimeString() + " " + m;
+        logEl.appendChild(d);
+        logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    const me = { x: 260, z: 160, yaw: 0, speed: 0 };
+    const peers = {}; // id -> {x,z,yaw,speed,seen}
+    const keys = {};
+    window.addEventListener("keydown", (e) => {
+        keys[e.code] = true;
+        if (e.code.indexOf("Arrow") === 0) e.preventDefault();
+    });
+    window.addEventListener("keyup", (e) => { keys[e.code] = false; });
+
+    let net = null;
+    function renderLobby(players) {
+        const box = $("lobby");
+        box.textContent = "";
+        players.forEach((p) => {
+            const d = document.createElement("div");
+            d.textContent = (net && p.id === net.id ? "(you) " : "") +
+                p.name + "  [" + (p.connected ? "connected" : "away") + "]";
+            if (net && p.id === net.id) d.className = "me";
+            box.appendChild(d);
+        });
+    }
+    function connect(create, code) {
+        if (net) net.leave();
+        for (const k in peers) delete peers[k];
+        net = new NetClient({
+            url: $("srv").value.trim(),
+            onLobby: renderLobby,
+            onCreated: (m) => {
+                $("code").textContent = m.code;
+                log("room created: " + m.code);
+            },
+            onJoined: (m) => {
+                $("code").textContent = m.code;
+                log("joined room: " + m.code);
+            },
+            onPeer: (p) => { peers[p.id] = p; },
+            onLeft: (id) => { delete peers[id]; log("peer left: " + id); },
+            onError: (e) => log("error: " + e),
+            onDisconnect: () => log("disconnected"),
+        });
+        if (create) net.create($("name").value);
+        else net.join(code, $("name").value);
+    }
+    $("btnCreate").onclick = () => connect(true);
+    $("btnJoin").onclick = () => connect(false, $("joinCode").value);
+    $("btnLeave").onclick = () => {
+        if (net) net.leave();
+        $("code").textContent = "—";
+        $("lobby").textContent = "not connected";
+        log("left room");
+    };
+
+    const cv = $("map").getContext("2d");
+    let last = performance.now();
+    function frame(now) {
+        requestAnimationFrame(frame);
+        const dt = Math.min(0.05, (now - last) / 1000);
+        last = now;
+        const turn = 2.4 * dt, sp = 160 * dt;
+        if (keys.ArrowLeft || keys.KeyA) me.yaw -= turn;
+        if (keys.ArrowRight || keys.KeyD) me.yaw += turn;
+        if (keys.ArrowUp || keys.KeyW) {
+            me.x += Math.sin(me.yaw) * sp;
+            me.z += Math.cos(me.yaw) * sp;
+        }
+        if (keys.ArrowDown || keys.KeyS) {
+            me.x -= Math.sin(me.yaw) * sp;
+            me.z -= Math.cos(me.yaw) * sp;
+        }
+        me.x = (me.x + 520) % 520;
+        me.z = (me.z + 320) % 320;
+        if (net && net.id) net.sendPos(me.x, me.z, me.yaw, 0);
+        cv.clearRect(0, 0, 520, 320);
+        cv.fillStyle = "#f2d132";
+        cv.beginPath();
+        cv.arc(me.x, me.z, 6, 0, 7);
+        cv.fill();
+        cv.fillStyle = "#7fd4c8";
+        for (const id in peers) {
+            const p = peers[id];
+            if (typeof p.x !== "number" || typeof p.z !== "number") continue;
+            cv.beginPath();
+            cv.arc(((p.x % 520) + 520) % 520, ((p.z % 320) + 320) % 320, 6, 0, 7);
+            cv.fill();
+        }
+    }
+    requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
