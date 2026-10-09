@@ -1,0 +1,17 @@
+{
+  "name": "apex-gp-mp-server",
+  "version": "0.1.0",
+  "description": "Lobby + pose-relay server for the Apex GP online-multiplayer prototype (Phase 2 milestone 1).",
+  "type": "commonjs",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test-proto.cjs && node test-netplay.cjs && node test-race.cjs && node test-netclient.cjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
